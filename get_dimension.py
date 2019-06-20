@@ -10,10 +10,9 @@ def get_dimension(self, folder_path):
         method_r = file.read()
         f=method_r.find(b'PVM_Matrix=( 2 )\n')
         dimension_locked=method_r[f+17:f+24]
-    arr=np.zeros(3)
+    arr=np.zeros(2)
     arr[0]=(str(dimension_locked)[2:5])
     arr[0]=int(arr[0])
     arr[1]=(str(dimension_locked)[6:9])
     arr[1]=int(arr[1])
-    arr[2]= 2
     return arr
