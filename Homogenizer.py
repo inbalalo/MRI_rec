@@ -154,9 +154,12 @@ class Homogenizer:
         Gets two reconstructed images and computes one phase image
         '''
         conj_img2           = np.conj(img2)
-        multiplic_img1_img2 = conj_img2*img1
-        phase_map           = np.angle(multiplic_img1_img2)
-        return phase_map
+        if  (img1.shape[1] == img2.shape[0]):
+            multiplic_img1_img2 = conj_img2*img1
+            phase_map           = np.angle(multiplic_img1_img2)
+            return phase_map
+        else:
+            raise IndexError('Size of matrices not suitable for linear multiplication')
 
     def pairwise(self, object_list):
         '''
@@ -229,7 +232,7 @@ class Homogenizer:
                     self.start()
                     return
                 if self.save_path == self.hGUI.default_folder_expression:
-                    self.save_path = self.scan_folders_path + '\\Results'
+                    self.save_path = self.scan_folders_path
             self.create_fid_dict(self.scan_folders_path)
             self.get_dimensions(self.scan_folders_path)
             self.get_tes(self.scan_folders_path)
@@ -250,10 +253,20 @@ class Homogenizer:
                 if self.get_input(UserPrefs.ShowFieldMaps):
                     self.display_image(list(self.field_map_dict.values()))
             if self.get_input(UserPrefs.SaveReconstructedImages):
-                pass#self.save_arrays_to_disk(self.save_path, self.reconstructed_image_dict, 'Reconstructed_image_')
+                [real_dict, imaginary_dict] = seperate_complex_values_dict(self.reconstructed_image_dict)
+                self.save_arrays_to_disk(self.save_path, real_dict, 'Reconstructed_image_real')
+                self.save_arrays_to_disk(self.save_path, imaginary_dict, 'Reconstructed_image_imaginary')
             if self.get_input(UserPrefs.ShowReconstructedImages):
                 self.display_image(list(self.field_map_dict.values()), True)
 
+def seperate_complex_values_dict(dict):
+    real_dict = OrderedDict([])
+    imaginary_dict = OrderedDict([])
+    for name, complexNum in dict.items():
+        real_dict[name] = complexNum.real
+        imaginary_dict[name] = complexNum.imag
+    return [real_dict, imaginary_dict]
+        
 if __name__ == "__main__":
     homogenizer = Homogenizer()
     homogenizer.hGUI = Homogenizer_GUI.Homogenizer_GUI()
