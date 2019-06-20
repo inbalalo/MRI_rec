@@ -16,3 +16,4 @@ def get_te(self, folder_path):
         te=int(te_str[0])
     else:
         te=float(te_str)
+    return te
