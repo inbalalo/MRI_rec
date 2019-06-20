@@ -9,6 +9,7 @@ import struct
 import itertools
 import Homogenizer_GUI
 from enum import Enum
+from collections import OrderedDict
 
 class UserPrefs(Enum):
     ScanFoldersPath = 0
@@ -29,17 +30,16 @@ class Homogenizer:
     def __init__(self):
         self.hGUI = None
         self.submit_button = "Submit"
-        self.cancel_button = "Cancel" # remove if not used
         self.gamma = 48.52*10**6
         self.te_array = np.arange(1.6,2.1,0.1)*10**-3 # replace with user_prefs / automatic from dir
         self.delta_te = self.te_array[1] - self.te_array[0] #constant difference # replace with user_prefs / automatic from dir
         self.dimension = [128,128,2] # replace with user_prefs / automatic from dir
         self.scan_folders_path = None
         self.save_path = None
-        self.fids_list = []
-        self.reconstructed_image_list = []
-        self.field_map_list = []
-        self.interpolated_field_map = None
+        self.fids_dict = OrderedDict([])
+        self.reconstructed_image_dict = OrderedDict([])
+        self.field_map_dict = OrderedDict([])
+        self.interpolated_field_map = OrderedDict([])
 
     def get_input(self, user_pref: UserPrefs):
         return self.hGUI.user_prefs[user_pref.value]
@@ -60,7 +60,11 @@ class Homogenizer:
             file_name = name_prefix + str(key)
             x_arr.to_netcdf(f'{path}\\{file_name}.nc', mode='w')
 
-    def reconstruct_image(self, fid_arr,dimension):
+    def reconstruct_images_from_fids(self, fid_dict):
+        for name_prefix, fid in fid_dict.items():
+            self.reconstructed_image_dict[name_prefix] = self.reconstruct_image(fid, self.dimension)
+
+    def reconstruct_image(self, fid_arr, dimension):
         '''
         Calculates the K space matrix -> calculates the 
         reconstructed image and returns it
@@ -73,22 +77,18 @@ class Homogenizer:
         img           = np.fft.fftshift(np.fft.ifft2(k_casting)) 
         return img
 
-    def reconstruct_images_from_fids(self, fid_list):
-        reconstructed_image_list = []    
-        for fid in fid_list:
-            reconstructed_image_list.append(self.reconstruct_image(fid, self.dimension))
-        return reconstructed_image_list    
-
-    def calc_field_maps_from_fids (self, list_of_fids, dimension):
-        ''' Gets list of FID files and calculates list of field maps
+    def calc_field_maps_from_fids (self, fid_dict, dimension):
+        ''' Gets an ordered dictionary of FID files and calculates dictionary of field maps
             by running on pairs of FID files
         '''
-        field_maps_list = []    
-        reconstructed_image_list = self.reconstruct_images_from_fids(list_of_fids)
-        image_pairs = self.pairwise(reconstructed_image_list)
+        self.reconstruct_images_from_fids(fid_dict)
+        image_pairs = self.pairwise(self.reconstructed_image_dict.values())
+        name_index = 0
+        name_list = list(self.reconstructed_image_dict.keys())
         for img1, img2 in image_pairs:
-            field_maps_list.append(self.calc_field_map_from_reconstructed_images(img1,img2))
-        return field_maps_list
+            field_map_prefix = name_list[name_index] + name_list[name_index+1]
+            name_index +=1
+            self.field_map_dict[field_map_prefix] = self.calc_field_map_from_reconstructed_images(img1,img2)
 
     def calc_field_map_from_reconstructed_images(self, img1,img2):
             phase_map = self.compute_phase(img1,img2)
@@ -104,41 +104,42 @@ class Homogenizer:
         phase_map           = np.angle(multiplic_img1_img2)
         return phase_map
 
-    def pairwise(self, list_of_arrays):
+    def pairwise(self, object_list):
         '''
-        Creates pairs of FID files from list of FIDs
+        Creates pairs of objects from a list of objects
         list_of_fids -> (fid0,fid1), (fid1,fid2), (fid2, fid3), and so forth...
 
         '''
-        array1, array2 = itertools.tee(list_of_arrays)
-        next(array2, None)
-        return zip(array1, array2)
+        obj1, obj2 = itertools.tee(object_list)
+        next(obj2, None)
+        return zip(obj1, obj2)
+
+    def interpolate_field_map_from_fids(self, fid_dict):
+        '''
+        Gets an ordered dictionary of FID files and calculates one interpolated field map 
+        '''
+        signals_amount = len(fid_dict)
+        self.calc_field_maps_from_fids(fid_dict, self.dimension)
+        self.interpolate_field_map(list(self.field_map_dict.values()), self.te_array, self.dimension,signals_amount) 
         
-    def interpolate_field_map(self, list_of_field_maps,te,dimension,signals_amount):
+    def interpolate_field_map(self, field_maps_list, te_values, dimension, signals_amount):
         '''
         Calculates one interpolated field map from all the calculated field maps
         '''
         slope=np.zeros((dimension[0],dimension[1]))
-        value_vec_in_phase_map = np.zeros(len(list_of_field_maps))
+        value_vec_in_phase_map = np.zeros(len(field_maps_list))
         for x in range(dimension[0]-1):
             for y in range(dimension[1]-1):
                 for z in range(signals_amount-1):
-                    value_vec_in_phase_map[z] = list_of_field_maps[z][x,y]
-                s,intercept = np.polyfit((te[:]),value_vec_in_phase_map,1)
+                    value_vec_in_phase_map[z] = field_maps_list[z][x,y]
+                s,intercept = np.polyfit((te_values[:]),value_vec_in_phase_map,1)
                 slope[x,y] = (s)
         interp_b=slope/self.gamma
-        return interp_b
+        self.interpolated_field_map = OrderedDict([('',interp_b)])
 
-    def interpolate_field_map_from_fids(self, list_of_fids):
+    def create_fid_dict(self, folder_path):
         '''
-        Gets list of FID files and calculates one interpolated field map 
-        '''
-        signals_amount = len(list_of_fids)
-        return self.interpolate_field_map(self.calc_field_maps_from_fids(list_of_fids,self.dimension), self.te_array, self.dimension,signals_amount) 
-
-    def create_fid_list(self, folder_path):
-        '''
-        Creates a list of numpy arrays from fid files
+        Creates an ordered dictionary of numpy arrays from fid files
         '''
         dir_list = os.listdir(folder_path)
         for scan_dir in dir_list:
@@ -146,7 +147,7 @@ class Homogenizer:
             if os.path.isdir(file_path):
                 fid_path = self.find_fid(file_path)
                 if isinstance(fid_path, str):
-                    self.fids_list.append(self.fid_to_nparray(fid_path))
+                    self.fids_dict[scan_dir] = self.fid_to_nparray(fid_path)
 
     def find_fid(self, containing_folder):
         '''
@@ -185,25 +186,25 @@ class Homogenizer:
                     return
                 if self.save_path == self.hGUI.default_folder_expression:
                     self.save_path = self.scan_folders_path + '\\Results'
-            self.create_fid_list(self.scan_folders_path)
+            self.create_fid_dict(self.scan_folders_path)
             # Checks what calculation the user had requested, and performs them:
             if self.get_input(UserPrefs.CalculateReconstructedImages):
-                self.reconstructed_image_list = self.reconstruct_images_from_fids(self.fids_list)
+                self.reconstruct_images_from_fids(self.fids_dict)
             else:
                 if self.get_input(UserPrefs.CalculateFieldMaps):
-                    self.field_map_list = self.calc_field_maps_from_fids(self.fids_list, self.dimension)
+                    self.calc_field_maps_from_fids(self.fids_dict, self.dimension)
                 else:
-                    self.interpolated_field_map = self.interpolate_field_map_from_fids(self.fids_list)
+                    self.interpolate_field_map_from_fids(self.fids_dict)
                     if self.get_input(UserPrefs.SaveInterpolatedFieldMap):
-                        pass    # call self.save_func()
+                        self.save_arrays_to_disk(self.save_path, self.interpolated_field_map,'Interpolated_field_map')
                     if self.get_input(UserPrefs.ShowInterpolatedFieldMap):
                         pass    # show interpolate field map image()
                 if self.get_input(UserPrefs.SaveFieldMaps):
-                    pass    # call self.save_func()
+                    self.save_arrays_to_disk(self.save_path, self.field_map_dict, 'Field_map_')
                 if self.get_input(UserPrefs.ShowFieldMaps):
                     pass    # show field map images()
             if self.get_input(UserPrefs.SaveReconstructedImages):
-                pass    # call self.save_func()
+                self.save_arrays_to_disk(self.save_path, self.reconstructed_image_dict, 'Reconstructed_Image_')
             if self.get_input(UserPrefs.ShowReconstructedImages):
                 pass    # show RI images() ABSSSSSSS
 
