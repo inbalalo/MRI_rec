@@ -22,9 +22,6 @@ class UserPrefs(Enum):
     ShowReconstructedImages = 7
     ShowFieldMaps = 8
     ShowInterpolatedFieldMap = 9
-    DimensionX = 10
-    DimensionY = 11
-    DimensionZ = 12
 
 class Homogenizer: 
     def __init__(self):
@@ -33,7 +30,7 @@ class Homogenizer:
         self.gamma = 48.52*10**6
         self.te_array = np.arange(1.6,2.1,0.1)*10**-3 # replace with user_prefs / automatic from dir
         self.delta_te = self.te_array[1] - self.te_array[0] #constant difference # replace with user_prefs / automatic from dir
-        self.dimension = [128,128,2] # replace with user_prefs / automatic from dir
+        self.dimensions = None # replace with user_prefs / automatic from dir
         self.scan_folders_path = None
         self.save_path = None
         self.fids_dict = OrderedDict([])
@@ -44,27 +41,51 @@ class Homogenizer:
     def get_input(self, user_pref: UserPrefs):
         return self.hGUI.user_prefs[user_pref.value]
 
-    def display_image(self, img):
+    def display_image(self, image_list, abs_values = False):
         '''
-        Displays the reconstructed image
+        Displays given images. mark abs_values as True to get the display images of abs values
         ''' 
-        plt.imshow(img)
-        plt.show()
+        for image in image_list:
+            if abs_values:
+                image = abs(image)
+            plt.imshow(image)
+            plt.show()
+    
+    def get_dimensions(self, folder_path):
+        dir_list = os.listdir(folder_path)
+        for scan_dir in dir_list:
+            file_path = folder_path + '\\' + scan_dir
+            if os.path.isdir(file_path):
+                method_path = self.find_file_by_name(file_path, 'method')
+                break
 
-    def save_arrays_to_disk(self, path, arrays_dictionary: dict, name_prefix: str):
+        with open(method_path, mode='rb') as file: 
+            method_r = file.read()
+            f=method_r.find(b'PVM_Matrix=( 2 )\n')
+            dimension_locked=method_r[f+17:f+24]
+        arr=np.zeros(2, np.int16)
+        arr[0]=(str(dimension_locked)[2:5])
+        arr[0]=int(arr[0])
+        arr[1]=(str(dimension_locked)[6:9])
+        arr[1]=int(arr[1])
+        self.dimensions = arr
+
+    def save_arrays_to_disk(self, save_path, arrays_dictionary: dict, name_prefix: str):
         """
         Convert every numpy array in arrays_dictionary to xarray and save it in the given path as a NetCDF file.
         """
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
         for key, array in arrays_dictionary.items():  #make sure to create folder if does not exist
             x_arr = xr.DataArray(array)
             file_name = name_prefix + str(key)
-            x_arr.to_netcdf(f'{path}\\{file_name}.nc', mode='w')
+            x_arr.to_netcdf(f'{save_path}\\{file_name}.nc', mode='w')
 
     def reconstruct_images_from_fids(self, fid_dict):
         for name_prefix, fid in fid_dict.items():
-            self.reconstructed_image_dict[name_prefix] = self.reconstruct_image(fid, self.dimension)
-
-    def reconstruct_image(self, fid_arr, dimension):
+            self.reconstructed_image_dict[name_prefix] = self.reconstruct_image(fid, self.dimensions)
+    
+    def reconstruct_image(self, fid_arr, dimensions):
         '''
         Calculates the K space matrix -> calculates the 
         reconstructed image and returns it
@@ -72,11 +93,14 @@ class Homogenizer:
         real_vals     = fid_arr[:-1:2]
         imag_vals     = fid_arr[1::2]
         complex_vals  = real_vals + 1j*imag_vals
-        k_space_scan  = np.reshape(complex_vals,(dimension[0],dimension[1]))
-        k_casting     = k_space_scan.astype(complex)
-        img           = np.fft.fftshift(np.fft.ifft2(k_casting)) 
-        return img
-
+        if (len(fid_arr) == dimensions[0]*dimensions[1]*2):
+            k_space_scan  = np.reshape(complex_vals,(dimensions[0],dimensions[1]))
+            k_casting     = k_space_scan.astype(complex)
+            img           = np.fft.fftshift(np.fft.ifft2(k_casting)) 
+            return img
+        else:
+            raise IndexError('Fid_arr cannot be reshaped to these dimensions')
+    
     def calc_field_maps_from_fids (self, fid_dict, dimension):
         ''' Gets an ordered dictionary of FID files and calculates dictionary of field maps
             by running on pairs of FID files
@@ -119,8 +143,8 @@ class Homogenizer:
         Gets an ordered dictionary of FID files and calculates one interpolated field map 
         '''
         signals_amount = len(fid_dict)
-        self.calc_field_maps_from_fids(fid_dict, self.dimension)
-        self.interpolate_field_map(list(self.field_map_dict.values()), self.te_array, self.dimension,signals_amount) 
+        self.calc_field_maps_from_fids(fid_dict, self.dimensions)
+        self.interpolate_field_map(list(self.field_map_dict.values()), self.te_array, self.dimensions,signals_amount) 
         
     def interpolate_field_map(self, field_maps_list, te_values, dimension, signals_amount):
         '''
@@ -145,17 +169,17 @@ class Homogenizer:
         for scan_dir in dir_list:
             file_path = folder_path + '\\' + scan_dir
             if os.path.isdir(file_path):
-                fid_path = self.find_fid(file_path)
+                fid_path = self.find_file_by_name(file_path, 'fid')
                 if isinstance(fid_path, str):
                     self.fids_dict[scan_dir] = self.fid_to_nparray(fid_path)
 
-    def find_fid(self, containing_folder):
+    def find_file_by_name(self, containing_folder, name_string):
         '''
         Finds and returns the fid file within the given folder
         '''
         dir_list = os.listdir(containing_folder)
         for file_name in dir_list:
-            if file_name == "fid":
+            if file_name == name_string:
                 file_path = containing_folder + '\\' + file_name
                 return file_path
 
@@ -187,26 +211,27 @@ class Homogenizer:
                 if self.save_path == self.hGUI.default_folder_expression:
                     self.save_path = self.scan_folders_path + '\\Results'
             self.create_fid_dict(self.scan_folders_path)
+            self.get_dimensions(self.scan_folders_path)
             # Checks what calculation the user had requested, and performs them:
             if self.get_input(UserPrefs.CalculateReconstructedImages):
                 self.reconstruct_images_from_fids(self.fids_dict)
             else:
                 if self.get_input(UserPrefs.CalculateFieldMaps):
-                    self.calc_field_maps_from_fids(self.fids_dict, self.dimension)
+                    self.calc_field_maps_from_fids(self.fids_dict, self.dimensions)
                 else:
                     self.interpolate_field_map_from_fids(self.fids_dict)
                     if self.get_input(UserPrefs.SaveInterpolatedFieldMap):
                         self.save_arrays_to_disk(self.save_path, self.interpolated_field_map,'Interpolated_field_map')
                     if self.get_input(UserPrefs.ShowInterpolatedFieldMap):
-                        pass    # show interpolate field map image()
+                        self.display_image(list(self.interpolated_field_map.values()))
                 if self.get_input(UserPrefs.SaveFieldMaps):
                     self.save_arrays_to_disk(self.save_path, self.field_map_dict, 'Field_map_')
                 if self.get_input(UserPrefs.ShowFieldMaps):
-                    pass    # show field map images()
+                    self.display_image(list(self.field_map_dict.values()))
             if self.get_input(UserPrefs.SaveReconstructedImages):
-                self.save_arrays_to_disk(self.save_path, self.reconstructed_image_dict, 'Reconstructed_Image_')
+                pass#self.save_arrays_to_disk(self.save_path, self.reconstructed_image_dict, 'Reconstructed_image_')
             if self.get_input(UserPrefs.ShowReconstructedImages):
-                pass    # show RI images() ABSSSSSSS
+                self.display_image(list(self.field_map_dict.values()), True)
 
 if __name__ == "__main__":
     homogenizer = Homogenizer()
