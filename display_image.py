@@ -4,5 +4,5 @@ def display_image(list_of_imgs):
     ''' 
     #abs_img    = abs(img)
     for image in list_of_imgs:
-        plt.imshow(img)
+        plt.imshow(image)
         plt.show()
