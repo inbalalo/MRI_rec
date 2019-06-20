@@ -28,9 +28,9 @@ class Homogenizer:
         self.hGUI = None
         self.submit_button = "Submit"
         self.gamma = 48.52*10**6
-        self.te_array = np.arange(1.6,2.1,0.1)*10**-3 # replace with user_prefs / automatic from dir
-        self.delta_te = self.te_array[1] - self.te_array[0] #constant difference # replace with user_prefs / automatic from dir
-        self.dimensions = None # replace with user_prefs / automatic from dir
+        self.te_array = []
+        self.delta_te = None
+        self.dimensions = None
         self.scan_folders_path = None
         self.save_path = None
         self.fids_dict = OrderedDict([])
@@ -51,6 +51,26 @@ class Homogenizer:
             plt.imshow(image)
             plt.show()
     
+    def get_tes(self, folder_path):
+        dir_list = os.listdir(folder_path)
+        for scan_dir in dir_list:
+            file_path = folder_path + '\\' + scan_dir
+            if os.path.isdir(file_path):
+                method_path = self.find_file_by_name(file_path, 'method')
+            with open(method_path, mode='rb') as file:
+                    method_r = file.read()
+                    f=method_r.find(b'EchoTime=')
+                    te_locked=method_r[f+9:f+12]
+                    te_str=str(te_locked)[2:5]
+            if (str(te_str).find('n') != -1): 
+                te=int(te_str[0])
+            else:
+                te=float(te_str)
+            self.te_array.append(te*10**-3)
+        del self.te_array[-1]
+        self.te_array = np.array(self.te_array)
+        self.delta_te = self.te_array[1] - self.te_array[0]
+
     def get_dimensions(self, folder_path):
         dir_list = os.listdir(folder_path)
         for scan_dir in dir_list:
@@ -70,13 +90,23 @@ class Homogenizer:
         arr[1]=int(arr[1])
         self.dimensions = arr
 
+    def find_file_by_name(self, containing_folder, name_string):
+        '''
+        Finds and returns the fid file within the given folder
+        '''
+        dir_list = os.listdir(containing_folder)
+        for file_name in dir_list:
+            if file_name == name_string:
+                file_path = containing_folder + '\\' + file_name
+                return file_path
+
     def save_arrays_to_disk(self, save_path, arrays_dictionary: dict, name_prefix: str):
         """
         Convert every numpy array in arrays_dictionary to xarray and save it in the given path as a NetCDF file.
         """
         if not os.path.exists(save_path):
             os.makedirs(save_path)
-        for key, array in arrays_dictionary.items():  #make sure to create folder if does not exist
+        for key, array in arrays_dictionary.items():
             x_arr = xr.DataArray(array)
             file_name = name_prefix + str(key)
             x_arr.to_netcdf(f'{save_path}\\{file_name}.nc', mode='w')
@@ -173,16 +203,6 @@ class Homogenizer:
                 if isinstance(fid_path, str):
                     self.fids_dict[scan_dir] = self.fid_to_nparray(fid_path)
 
-    def find_file_by_name(self, containing_folder, name_string):
-        '''
-        Finds and returns the fid file within the given folder
-        '''
-        dir_list = os.listdir(containing_folder)
-        for file_name in dir_list:
-            if file_name == name_string:
-                file_path = containing_folder + '\\' + file_name
-                return file_path
-
     def fid_to_nparray(self, fid_path):
         '''
         Opens a binary file and inserts it to a numpy array
@@ -212,6 +232,7 @@ class Homogenizer:
                     self.save_path = self.scan_folders_path + '\\Results'
             self.create_fid_dict(self.scan_folders_path)
             self.get_dimensions(self.scan_folders_path)
+            self.get_tes(self.scan_folders_path)
             # Checks what calculation the user had requested, and performs them:
             if self.get_input(UserPrefs.CalculateReconstructedImages):
                 self.reconstruct_images_from_fids(self.fids_dict)
