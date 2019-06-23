@@ -10,6 +10,7 @@ import itertools
 import Homogenizer_GUI
 from enum import Enum
 from collections import OrderedDict
+import pickle 
 
 class UserPrefs(Enum):
     ScanFoldersPath = 0
@@ -29,8 +30,8 @@ class Homogenizer:
         self.submit_button = "Submit"
         self.gamma = 48.52*10**6
         self.te_array = []
-        self.delta_te = None
-        self.dimensions = None
+        self.delta_te = 0.0001 #standard initialization
+        self.dimensions = np.array([128,128]) #standard initialization
         self.scan_folders_path = None
         self.save_path = None
         self.fids_dict = OrderedDict([])
@@ -48,10 +49,20 @@ class Homogenizer:
         for image in image_list:
             if abs_values:
                 image = abs(image)
+                plt.title("Reconstructed Image")
+            else:
+                plt.title("Field Map - B[T] Values as function of location")
+            plt.xlabel("Location")
+            plt.ylabel("Location")
             plt.imshow(image)
+            plt.colorbar()
             plt.show()
     
     def get_tes(self, folder_path):
+        ''' 
+        Finds the TE value in a specific scan (the information exists in the 'method' file of each scan)
+        Then creates an array of all TEs 
+        '''
         dir_list = os.listdir(folder_path)
         for scan_dir in dir_list:
             file_path = folder_path + '\\' + scan_dir
@@ -70,8 +81,11 @@ class Homogenizer:
         del self.te_array[-1]
         self.te_array = np.array(self.te_array)
         self.delta_te = self.te_array[1] - self.te_array[0]
-
+  
     def get_dimensions(self, folder_path):
+        ''' 
+        Finds the dimensions of the matrix (the information exists in the 'method' file of each scan)
+        '''
         dir_list = os.listdir(folder_path)
         for scan_dir in dir_list:
             file_path = folder_path + '\\' + scan_dir
@@ -90,10 +104,16 @@ class Homogenizer:
         arr[1]=int(arr[1])
         self.dimensions = arr
 
+        pickle.dump(self.dimensions, open("dimensions.dat","wb"))
+
     def find_file_by_name(self, containing_folder, name_string):
         '''
         Finds and returns the fid file within the given folder
         '''
+
+        pickle.dump(containing_folder, open("containing_folder.dat","wb"))
+        pickle.dump(name_string, open("name_string.dat","wb"))
+
         dir_list = os.listdir(containing_folder)
         for file_name in dir_list:
             if file_name == name_string:
@@ -102,7 +122,7 @@ class Homogenizer:
 
     def save_arrays_to_disk(self, save_path, arrays_dictionary: dict, name_prefix: str):
         """
-        Convert every numpy array in arrays_dictionary to xarray and save it in the given path as a NetCDF file.
+        Converts every numpy array in arrays_dictionary to xarray and save it in the given path as a NetCDF file.
         """
         if not os.path.exists(save_path):
             os.makedirs(save_path)
@@ -120,6 +140,8 @@ class Homogenizer:
         Calculates the K space matrix -> calculates the 
         reconstructed image and returns it
         ''' 
+        pickle.dump(fid_arr, open("fid_arr.dat","wb"))
+
         real_vals     = fid_arr[:-1:2]
         imag_vals     = fid_arr[1::2]
         complex_vals  = real_vals + 1j*imag_vals
@@ -135,6 +157,8 @@ class Homogenizer:
         ''' Gets an ordered dictionary of FID files and calculates dictionary of field maps
             by running on pairs of FID files
         '''
+        pickle.dump(fid_dict, open("fid_dict.dat","wb"))
+
         self.reconstruct_images_from_fids(fid_dict)
         image_pairs = self.pairwise(self.reconstructed_image_dict.values())
         name_index = 0
@@ -145,9 +169,13 @@ class Homogenizer:
             self.field_map_dict[field_map_prefix] = self.calc_field_map_from_reconstructed_images(img1,img2)
 
     def calc_field_map_from_reconstructed_images(self, img1,img2):
-            phase_map = self.compute_phase(img1,img2)
-            bmap = phase_map/((2*np.pi*self.gamma*(self.delta_te)))
-            return bmap
+
+        pickle.dump(img1, open("img1.dat","wb"))
+        pickle.dump(img2, open("img2.dat","wb"))
+
+        phase_map = self.compute_phase(img1,img2)
+        bmap = phase_map/((2*np.pi*self.gamma*(self.delta_te)))
+        return bmap
 
     def compute_phase(self, img1,img2):
         '''
@@ -165,8 +193,9 @@ class Homogenizer:
         '''
         Creates pairs of objects from a list of objects
         list_of_fids -> (fid0,fid1), (fid1,fid2), (fid2, fid3), and so forth...
-
         '''
+        pickle.dump(list(object_list), open("object_list.dat","wb"))
+
         obj1, obj2 = itertools.tee(object_list)
         next(obj2, None)
         return zip(obj1, obj2)
@@ -175,14 +204,19 @@ class Homogenizer:
         '''
         Gets an ordered dictionary of FID files and calculates one interpolated field map 
         '''
+
         signals_amount = len(fid_dict)
         self.calc_field_maps_from_fids(fid_dict, self.dimensions)
         self.interpolate_field_map(list(self.field_map_dict.values()), self.te_array, self.dimensions,signals_amount) 
         
-    def interpolate_field_map(self, field_maps_list, te_values, dimension, signals_amount):
+    def interpolate_field_map(self, field_maps_list,te_values, dimension, signals_amount):
         '''
         Calculates one interpolated field map from all the calculated field maps
         '''
+        pickle.dump(field_maps_list, open("field_maps_list.dat","wb"))
+        pickle.dump(te_values, open("te_values.dat","wb")) 
+        pickle.dump(signals_amount, open("signals_amoung.dat","wb"))
+
         slope=np.zeros((dimension[0],dimension[1]))
         value_vec_in_phase_map = np.zeros(len(field_maps_list))
         for x in range(dimension[0]-1):
@@ -198,6 +232,9 @@ class Homogenizer:
         '''
         Creates an ordered dictionary of numpy arrays from fid files
         '''
+
+        pickle.dump(folder_path, open("folder_path.dat","wb"))
+
         dir_list = os.listdir(folder_path)
         for scan_dir in dir_list:
             file_path = folder_path + '\\' + scan_dir
@@ -210,6 +247,9 @@ class Homogenizer:
         '''
         Opens a binary file and inserts it to a numpy array
         ''' 
+
+        pickle.dump(fid_path, open("fid_path.dat","wb"))
+
         with open(fid_path, mode='rb') as file: # b is important -> binary
             fid_r = file.read()
             fid_l = list(struct.unpack("i" * ((len(fid_r) -4) // 4), fid_r[0:-4]))
@@ -218,6 +258,9 @@ class Homogenizer:
         return fid_arr
 
     def start(self):
+        '''
+        Triggers calculations begin with given inputs by the user throughout the GUI.
+        '''
         self.scan_folders_path = self.hGUI.open_main_window()
         # Starts job if user had pressed submit:     
         if self.hGUI.last_button_pressed == self.submit_button:
