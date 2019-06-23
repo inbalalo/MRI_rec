@@ -1,4 +1,4 @@
-from Homogenizer import *
+from MRI_rec.MRI_reconstruction.Homogenizer import *
 import os
 import numpy as np
 from mockdata import *
